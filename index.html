@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>PV Assistent</title>
+
+<style>
+
+body{
+    margin:0;
+    padding:20px;
+    font-family:Arial,sans-serif;
+    background:#f0f2f5;
+}
+
+.card{
+
+    max-width:500px;
+    margin:auto;
+
+    background:white;
+    border-radius:16px;
+
+    padding:20px;
+
+    box-shadow:0 4px 16px rgba(0,0,0,0.15);
+}
+
+h1{
+    text-align:center;
+    margin-top:0;
+}
+
+.info{
+
+    background:#eef6ff;
+
+    padding:12px;
+
+    border-radius:10px;
+
+    margin-bottom:15px;
+}
+
+button{
+
+    width:100%;
+
+    padding:15px;
+
+    border:none;
+
+    background:#0a8f41;
+
+    color:white;
+
+    font-size:18px;
+
+    border-radius:10px;
+
+    cursor:pointer;
+}
+
+button:hover{
+    background:#0c7b39;
+}
+
+.result{
+
+    margin-top:20px;
+
+    padding:15px;
+
+    background:#f7f7f7;
+
+    border-radius:12px;
+
+    min-height:120px;
+}
+
+.good{
+    color:#0a8f41;
+    font-weight:bold;
+}
+
+.bad{
+    color:#d10000;
+    font-weight:bold;
+}
+
+.small{
+    color:#666;
+    font-size:14px;
+}
+
+</style>
+</head>
+<body>
+
+<div class="card">
+
+<h1>☀️ PV Assistent</h1>
+
+<div class="info">
+PV: 24,4 kWp<br>
+Speicher: 16 kWh<br>
+Ausrichtung: Süd 50°<br>
+Standort: 97618
+</div>
+
+<button onclick="analyse()">
+Prognose laden
+</button>
+
+<div id="output" class="result">
+Auf "Prognose laden" tippen.
+</div>
+
+</div>
+
+<script>
+
+const PV_POWER = 24.4;
+const BATTERY_SIZE = 16;
+
+async function analyse(){
+
+const output =
+document.getElementById("output");
+
+output.innerHTML =
+"Berechne Prognose...";
+
+try{
+
+const response = await fetch(
+"https://api.open-meteo.com/v1/forecast?latitude=50.32&longitude=10.22&hourly=shortwave_radiation&forecast_days=2"
+);
+
+const data = await response.json();
+
+const times =
+data.hourly.time;
+
+const radiation =
+data.hourly.shortwave_radiation;
+
+let dayMap = {};
+
+for(let i=0;i<times.length;i++){
+
+const date =
+new Date(times[i]);
+
+const key =
+date.toISOString().split("T")[0];
+
+if(!dayMap[key]){
+dayMap[key] = [];
+}
+
+dayMap[key].push({
+
+hour: date.getHours(),
+
+radiation:
+radiation[i]
+
+});
+
+}
+
+const keys =
+Object.keys(dayMap);
+
+function evaluateDay(hours){
+
+let battery = 0;
+
+let fullHour = null;
+
+let hourlyData = [];
+
+let totalPv = 0;
+
+for(const item of hours){
+
+const pvKwh =
+(item.radiation / 1000)
+*
+PV_POWER
+*
+0.85;
+
+totalPv += pvKwh;
+
+if(fullHour === null){
+
+battery += pvKwh;
+
+if(battery >= BATTERY_SIZE){
+
+battery = BATTERY_SIZE;
+
+fullHour =
+item.hour;
+
+}
+
+}
+
+let surplus = 0;
+
+if(fullHour !== null){
+
+surplus = pvKwh;
+
+}
+
+hourlyData.push({
+
+hour:item.hour,
+surplus:surplus
+
+});
+
+}
+
+let bestWindow = 0;
+let bestStart = null;
+
+for(let i=0;i<hourlyData.length-3;i++){
+
+let sum = 0;
+
+for(let j=0;j<4;j++){
+
+sum +=
+hourlyData[i+j].surplus;
+
+}
+
+if(sum > bestWindow){
+
+bestWindow = sum;
+bestStart =
+hourlyData[i].hour;
+
+}
+
+}
+
+return {
+
+totalPv,
+fullHour,
+bestWindow,
+bestStart
+
+};
+
+}
+
+const today =
+evaluateDay(dayMap[keys[0]]);
+
+const tomorrow =
+evaluateDay(dayMap[keys[1]]);
+
+let winner =
+today.bestWindow >
+tomorrow.bestWindow
+? {
+name:"Heute",
+...today
+}
+: {
+name:"Morgen",
+...tomorrow
+};
+
+if(
+today.fullHour === null &&
+tomorrow.fullHour === null
+){
+
+output.innerHTML =
+
+`<div class='bad'>⚪ Maschine egal</div>
+
+<br>
+
+Der Speicher wird
+voraussichtlich weder heute
+noch morgen voll.
+
+<br><br>
+
+Heute PV:
+${today.totalPv.toFixed(1)} kWh
+
+<br>
+
+Morgen PV:
+${tomorrow.totalPv.toFixed(1)} kWh`;
+
+return;
+}
+
+output.innerHTML =
+
+`<div class='good'>
+✅ Empfehlung
+</div>
+
+<br>
+
+<b>${winner.name}</b>
+
+<br><br>
+
+Maschinen möglichst starten:
+
+<br><br>
+
+<b>
+${winner.bestStart}:00 Uhr
+bis
+${winner.bestStart + 4}:00 Uhr
+</b>
+
+<br><br>
+
+Speicher voll ab:
+
+<b>
+${winner.fullHour}:00 Uhr
+</b>
+
+<br><br>
+
+Erwarteter Überschuss:
+
+<b>
+${winner.bestWindow.toFixed(1)}
+kWh
+</b>
+
+<br><br>
+
+<div class='small'>
+
+Heute PV:
+${today.totalPv.toFixed(1)} kWh
+
+<br>
+
+Morgen PV:
+${tomorrow.totalPv.toFixed(1)} kWh
+
+</div>`;
+
+}
+catch(err){
+
+output.innerHTML =
+
+"<span class='bad'>Fehler beim Abruf der Wetterdaten.</span><br><br>Wenn die Datei lokal geöffnet wird, blockiert dein Browser möglicherweise die API-Anfrage.";
+
+}
+
+}
+
+</script>
+
+</body>
+</html>
