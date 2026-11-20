@@ -8,7 +8,6 @@
 
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0a8f41">
-    
 
 <style>
 
@@ -20,15 +19,11 @@ body{
 }
 
 .card{
-
     max-width:500px;
     margin:auto;
-
     background:white;
     border-radius:16px;
-
     padding:20px;
-
     box-shadow:0 4px 16px rgba(0,0,0,0.15);
 }
 
@@ -38,49 +33,17 @@ h1{
 }
 
 .info{
-
     background:#eef6ff;
-
     padding:12px;
-
     border-radius:10px;
-
     margin-bottom:15px;
 }
 
-button{
-
-    width:100%;
-
-    padding:15px;
-
-    border:none;
-
-    background:#0a8f41;
-
-    color:white;
-
-    font-size:18px;
-
-    border-radius:10px;
-
-    cursor:pointer;
-}
-
-button:hover{
-    background:#0c7b39;
-}
-
 .result{
-
     margin-top:20px;
-
     padding:15px;
-
     background:#f7f7f7;
-
     border-radius:12px;
-
     min-height:120px;
 }
 
@@ -99,8 +62,14 @@ button:hover{
     font-size:14px;
 }
 
+.loading{
+    color:#555;
+}
+
 </style>
+
 </head>
+
 <body>
 
 <div class="card">
@@ -114,12 +83,10 @@ Ausrichtung: Süd 50°<br>
 Standort: 97618
 </div>
 
-<button onclick="analyse()">
-Prognose laden
-</button>
-
 <div id="output" class="result">
-Auf "Prognose laden" tippen.
+<span class="loading">
+Lade Prognose...
+</span>
 </div>
 
 </div>
@@ -128,6 +95,7 @@ Auf "Prognose laden" tippen.
 
 const PV_POWER = 24.4;
 const BATTERY_SIZE = 16;
+const SYSTEM_EFFICIENCY = 0.82;
 
 async function analyse(){
 
@@ -140,10 +108,11 @@ output.innerHTML =
 try{
 
 const response = await fetch(
-"https://api.open-meteo.com/v1/forecast?latitude=50.32&longitude=10.22&hourly=shortwave_radiation&forecast_days=2"
+"https://api.open-meteo.com/v1/forecast?latitude=50.32&longitude=10.22&hourly=shortwave_radiation&forecast_days=2&timezone=Europe%2FBerlin"
 );
 
-const data = await response.json();
+const data =
+await response.json();
 
 const times =
 data.hourly.time;
@@ -155,135 +124,136 @@ let dayMap = {};
 
 for(let i=0;i<times.length;i++){
 
-const date =
-new Date(times[i]);
+    const date =
+    new Date(times[i]);
 
-const key =
-date.toISOString().split("T")[0];
+    const key =
+    date.getFullYear() + "-" +
+    String(date.getMonth()+1).padStart(2,"0") + "-" +
+    String(date.getDate()).padStart(2,"0");
 
-if(!dayMap[key]){
-dayMap[key] = [];
-}
+    if(!dayMap[key]){
+        dayMap[key]=[];
+    }
 
-dayMap[key].push({
-
-hour: date.getHours(),
-
-radiation:
-radiation[i]
-
-});
+    dayMap[key].push({
+        hour:date.getHours(),
+        radiation:radiation[i]
+    });
 
 }
 
-const keys =
+const dayKeys =
 Object.keys(dayMap);
 
 function evaluateDay(hours){
 
-let battery = 0;
+    let battery = 0;
 
-let fullHour = null;
+    let fullHour = null;
 
-let hourlyData = [];
+    let totalPv = 0;
 
-let totalPv = 0;
+    let hourlyData = [];
 
-for(const item of hours){
+    for(const item of hours){
 
-const pvKwh =
-(item.radiation / 1000)
-*
-PV_POWER
-*
-0.85;
+        const pvKwh =
+        (item.radiation / 1000)
+        *
+        PV_POWER
+        *
+        SYSTEM_EFFICIENCY;
 
-totalPv += pvKwh;
+        totalPv += pvKwh;
 
-if(fullHour === null){
+        if(fullHour === null){
 
-battery += pvKwh;
+            battery += pvKwh;
 
-if(battery >= BATTERY_SIZE){
+            if(
+                battery >= BATTERY_SIZE
+            ){
 
-battery = BATTERY_SIZE;
+                battery =
+                BATTERY_SIZE;
 
-fullHour =
-item.hour;
+                fullHour =
+                item.hour;
+            }
+        }
 
-}
+        hourlyData.push({
 
-}
+            hour:item.hour,
 
-let surplus = 0;
+            surplus:
+            fullHour !== null
+            ? pvKwh
+            : 0
 
-if(fullHour !== null){
+        });
 
-surplus = pvKwh;
+    }
 
-}
+    let bestStart = null;
+    let bestWindow = 0;
 
-hourlyData.push({
+    for(
+        let i=0;
+        i<hourlyData.length-3;
+        i++
+    ){
 
-hour:item.hour,
-surplus:surplus
+        let sum = 0;
 
-});
+        for(
+            let j=0;
+            j<4;
+            j++
+        ){
 
-}
+            sum +=
+            hourlyData[i+j]
+            .surplus;
 
-let bestWindow = 0;
-let bestStart = null;
+        }
 
-for(let i=0;i<hourlyData.length-3;i++){
+        if(sum > bestWindow){
 
-let sum = 0;
+            bestWindow =
+            sum;
 
-for(let j=0;j<4;j++){
+            bestStart =
+            hourlyData[i].hour;
 
-sum +=
-hourlyData[i+j].surplus;
+        }
 
-}
+    }
 
-if(sum > bestWindow){
+    return {
 
-bestWindow = sum;
-bestStart =
-hourlyData[i].hour;
+        totalPv,
 
-}
+        fullHour,
 
-}
+        bestWindow,
 
-return {
+        bestStart
 
-totalPv,
-fullHour,
-bestWindow,
-bestStart
-
-};
+    };
 
 }
 
 const today =
-evaluateDay(dayMap[keys[0]]);
+evaluateDay(
+dayMap[dayKeys[0]]
+);
 
 const tomorrow =
-evaluateDay(dayMap[keys[1]]);
-
-let winner =
-today.bestWindow >
-tomorrow.bestWindow
-? {
-name:"Heute",
-...today
-}
-: {
-name:"Morgen",
-...tomorrow
-};
+evaluateDay(
+dayMap[dayKeys[1]]
+);
 
 if(
 today.fullHour === null &&
@@ -292,52 +262,81 @@ tomorrow.fullHour === null
 
 output.innerHTML =
 
-`<div class='bad'>⚪ Maschine egal</div>
+`
+<div class="bad">
+⚪ Maschine egal
+</div>
 
 <br>
 
-Der Speicher wird
-voraussichtlich weder heute
-noch morgen voll.
+Der 16-kWh-Speicher
+wird laut Prognose
+weder heute noch morgen
+vollständig geladen.
 
 <br><br>
 
-Heute PV:
-${today.totalPv.toFixed(1)} kWh
+Heute Prognose:
+<b>
+${today.totalPv.toFixed(1)}
+kWh
+</b>
 
 <br>
 
-Morgen PV:
-${tomorrow.totalPv.toFixed(1)} kWh`;
+Morgen Prognose:
+<b>
+${tomorrow.totalPv.toFixed(1)}
+kWh
+</b>
+`;
 
 return;
+
 }
+
+const winner =
+today.bestWindow >
+tomorrow.bestWindow
+? {
+label:"Heute",
+...today
+}
+: {
+label:"Morgen",
+...tomorrow
+};
 
 output.innerHTML =
 
-`<div class='good'>
+`
+<div class="good">
 ✅ Empfehlung
 </div>
 
 <br>
 
-<b>${winner.name}</b>
+<b>
+${winner.label}
+</b>
 
 <br><br>
 
-Maschinen möglichst starten:
+Maschinen starten zwischen
 
 <br><br>
 
 <b>
 ${winner.bestStart}:00 Uhr
-bis
+–
 ${winner.bestStart + 4}:00 Uhr
 </b>
 
 <br><br>
 
-Speicher voll ab:
+Speicher vermutlich voll ab
+
+<br>
 
 <b>
 ${winner.fullHour}:00 Uhr
@@ -345,7 +344,10 @@ ${winner.fullHour}:00 Uhr
 
 <br><br>
 
-Erwarteter Überschuss:
+Prognostizierter Überschuss
+in diesem Zeitraum
+
+<br>
 
 <b>
 ${winner.bestWindow.toFixed(1)}
@@ -354,28 +356,40 @@ kWh
 
 <br><br>
 
-<div class='small'>
+<div class="small">
 
-Heute PV:
-${today.totalPv.toFixed(1)} kWh
+Heute:
+${today.totalPv.toFixed(1)}
+kWh
 
 <br>
 
-Morgen PV:
-${tomorrow.totalPv.toFixed(1)} kWh
+Morgen:
+${tomorrow.totalPv.toFixed(1)}
+kWh
 
-</div>`;
+</div>
+
+`;
 
 }
-catch(err){
+catch(error){
+
+console.error(error);
 
 output.innerHTML =
 
-"<span class='bad'>Fehler beim Abruf der Wetterdaten.</span><br><br>Wenn die Datei lokal geöffnet wird, blockiert dein Browser möglicherweise die API-Anfrage.";
+`
+<div class="bad">
+Fehler beim Abruf der Wetterdaten
+</div>
+`;
 
 }
 
 }
+
+analyse();
 
 </script>
 
